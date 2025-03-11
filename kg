@@ -1,0 +1,134 @@
+import numpy as np
+from PIL import Image, ImageOps
+import random
+import math
+
+
+#7вычисление барицентрических координат
+def bar_cor(x, y, x0, y0, x1, y1, x2, y2):
+    denominator = (x0 - x2) * (y1 - y2) - (x1 - x2) * (y0 - y2)
+
+    if denominator == 0:
+        return None, None, None  # невозможно вычислить, если треугольник вырожден
+
+    lambda0 = ((x - x2) * (y1 - y2) - (x1 - x2) * (y - y2)) / denominator
+    lambda1 = ((x0 - x2) * (y - y2) - (x - x2) * (y0 - y2)) / denominator
+    lambda2 = 1.0 - lambda0 - lambda1
+
+    return lambda0, lambda1, lambda2
+
+'''
+#9 тестирование функции
+def test_draw_triangle():
+    W, H = 300, 300
+    img = Image.new("RGB", (W, H), (255, 255, 255))
+
+    triangles = [
+        (50, 50, 150, 50, 100, 150),
+        (200, 200, 250, 300, 300, 200),
+        (300, 50, 150, 100, 400, 200),
+    ]
+    #добавление индекса к каждому эл-ту(порядковый номер)
+    for (x0, y0, x1, y1, x2, y2) in triangles:
+        color = (random.randint(0,255),random.randint(0,255),random.randint(0,255)) 
+        draw_triangle(img, x0, y0, x1, y1, x2, y2,color)
+
+    img.save('triangletest.png')
+    img.show()
+'''
+#отрисовка полигонов трехмерной модели
+def load_obj(model_1):
+    vertices = []  
+    faces = [] #грани
+    
+    with open('model_1.obj', 'r') as file:
+        for line in file:
+            s = line.split()
+            if s[0] == "v":
+                vertices.append([float(s[1]), float(s[2]), float(s[3])])
+            elif s[0] == "f":
+                faces.append([int(s[1].split('/')[0]), int(s[2].split('/')[0]), int(s[3].split('/')[0])])
+    return vertices, faces
+
+'''
+
+def draw_polygons_from_obj(image, vertices, faces):
+    for face in faces:
+        if len(face) == 3:  # Обрабатываем только треугольники
+            v0, v1, v2 = [vertices[i] for i in face]
+            color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))  # Случайный цвет
+            
+            # Преобразуем 3D координаты в 2D
+            # Упрощенный способ: игнорируем Z-координаты и масштабируем X и Y
+            x0, y0 = int(v0[0] * 5000 + image.width // 2), int(v0[1] * 5000 + image.height // 2)
+            x1, y1 = int(v1[0] * 5000 + image.width // 2), int(v1[1] * 5000 + image.height // 2)
+            x2, y2 = int(v2[0] * 5000 + image.width // 2), int(v2[1] * 5000 + image.height // 2)
+
+            draw_triangle(image, x0, y0, x1, y1, x2, y2, color)
+
+
+
+ #11,12
+# вычисление нормали к поверхности треугольника
+def triangle_normal(v0,v1,v2):
+    A=np.array(v1)-np.array(v0)
+    B=np.array(v2)-np.array(v0)
+    normal = np.cross(A,B)#Произведение векторное
+   
+    if np.linalg.norm(normal) == 0:  
+        return None  
+    return normal / np.linalg.norm(normal)
+'''
+
+
+#отрисовка треугольников
+def draw_triangle(vertices, img, z_buff, color):
+    x0, y0, z0 = vertices[0]
+    x1, y1, z1 = vertices[1]
+    x2, y2, z2 = vertices[2]
+
+    xmin = int(max(0, min(x0, x1, x2)))
+    ymin = int(max(0, min(y0, y1, y2)))
+    xmax = int(min(999, max(x0, x1, x2) + 1))
+    ymax = int(min(999, max(y0, y1, y2) + 1))
+
+    for i in range(xmin, xmax):
+        for j in range(ymin, ymax):
+            lambda0, lambda1, lambda2 = bar_cor(i, j, x0, y0, x1, y1, x2, y2)
+            if lambda0 is not None and lambda1 is not None and lambda2 is not None and lambda0 >= 0 and lambda1 >= 0 and lambda2 >= 0:
+                z = lambda0 * z0 + lambda1 * z1 + lambda2 * z2
+                if z < z_buff[j, i]:
+                    z_buff[j, i] = z
+                    img[j, i] = color
+
+def main():
+    H,W = 1000,1000
+    vertices, faces = load_obj("model_1.obj")
+    img_matr = np.zeros((H, W, 3), dtype=np.uint8)
+    zbuf = np.full((H, W), np.inf, dtype=np.float32)
+        
+    for face in faces:
+        v0, v1, v2 = [vertices[i - 1] for i in face]
+        x0, y0, z0 = (v0[0] * 2500 + 500, v0[1] * 2500 + 500, v0[2] * 2500 + 500)
+        x1, y1, z1 = (v1[0] * 2500 + 500, v1[1] * 2500 + 500, v1[2] * 2500 + 500)
+        x2, y2, z2 = (v2[0] * 2500 + 500, v2[1] * 2500 + 500, v2[2] * 2500 + 500)
+
+        # нормаль и освещение
+        u = np.array([x1 - x0, y1 - y0, z1 -  z0]) #вектор опред сторону треуг
+        v = np.array([x2 - x0, y2 - y0, z2 - z0])
+        n = np.cross(u, v) #векторное произведение
+        s = np.array([0, 0, 1]) #свет
+        m = np.linalg.norm(n) * np.linalg.norm(s) #произведение норм вектора n и s 
+        coss = np.dot(n, s) / m #(скалярное произведение) косинус угла между нормалью n и вектором направления света s
+
+        color = (-255 * coss, 100, -100 * coss)
+        if coss < 0:
+            draw_triangle([(x0, y0, z0), (x1, y1, z1), (x2, y2, z2)], img_matr, zbuf, color)
+
+    img = Image.fromarray(img_matr, mode='RGB')
+    img = ImageOps.flip(img)
+    img.save('frame.png')
+    img.show()
+
+main()
+
