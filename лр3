@@ -1,0 +1,129 @@
+import numpy as np
+from PIL import Image, ImageOps
+import math
+
+# вычисление барицентрических координат
+def bar_cor(x, y, x0, y0, x1, y1, x2, y2):
+    denominator = (x0 - x2) * (y1 - y2) - (x1 - x2) * (y0 - y2)
+    if denominator == 0:
+        return None, None, None  # невозможно вычислить, если треугольник вырожден
+    lambda0 = ((x - x2) * (y1 - y2) - (x1 - x2) * (y - y2)) / denominator
+    lambda1 = ((x0 - x2) * (y - y2) - (x - x2) * (y0 - y2)) / denominator
+    lambda2 = 1.0 - lambda0 - lambda1
+    return lambda0, lambda1, lambda2
+
+def load_obj(filename):
+    vertices = []
+    faces = []
+    with open(filename, 'r') as file:
+        for line in file:
+            parts = line.split()
+            if parts[0] == "v":
+                vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
+            elif parts[0] == "f":
+                # извлекаем только индексы вершин
+                face_indices = [int(part.split('/')[0]) - 1 for part in parts[1:]]
+                faces.append(face_indices)
+    return vertices, faces
+
+# отрисовка треугольника
+def draw_triangle(vertices, img, z_buff, color):
+    x0, y0, z0 = vertices[0]
+    x1, y1, z1 = vertices[1]
+    x2, y2, z2 = vertices[2]
+
+    xmin = int(max(0, min(x0, x1, x2)))
+    ymin = int(max(0, min(y0, y1, y2)))
+    xmax = int(min(999, max(x0, x1, x2) + 1))
+    ymax = int(min(999, max(y0, y1, y2) + 1))
+
+    for i in range(xmin, xmax):
+        for j in range(ymin, ymax):
+            lambda0, lambda1, lambda2 = bar_cor(i, j, x0, y0, x1, y1, x2, y2)
+            if (lambda0 is not None and lambda1 is not None and lambda2 is not None and
+                lambda0 >= 0 and lambda1 >= 0 and lambda2 >= 0):
+                z = lambda0 * z0 + lambda1 * z1 + lambda2 * z2
+                if z < z_buff[j, i]:
+                    z_buff[j, i] = z
+                    img[j, i] = color
+
+# поворот и сдвиг #15
+def rotate_and_translate(vertex, alpha, beta, gamma, tx, ty, tz):
+    x, y, z = vertex
+    #комбинация поворотов
+    rotation_x = np.array([[1, 0, 0],
+                            [0, math.cos(alpha), math.sin(alpha)],
+                            [0, -math.sin(alpha), math.cos(alpha)]])
+    rotation_y = np.array([[math.cos(beta), 0, math.sin(beta)],
+                            [0, 1, 0],
+                            [-math.sin(beta), 0, math.cos(beta)]])
+    rotation_z = np.array([[math.cos(gamma), math.sin(gamma), 0],
+                            [-math.sin(gamma), math.cos(gamma), 0],
+                            [0, 0, 1]])
+    rotation_matrix = np.linalg.multi_dot([rotation_z, rotation_y, rotation_x]) #умножаем матрицы в порядке z,y,x
+    rotated_vertex = np.dot(rotation_matrix, np.array([x, y, z])) 
+    return rotated_vertex + np.array([tx, ty, tz])
+
+
+def calculate_normal(v0, v1, v2):
+    u = np.array(v1) - np.array(v0)
+    v = np.array(v2) - np.array(v0)
+    normal = -np.cross(u, v)
+    return normal / np.linalg.norm(normal)
+
+# проективное преобразование
+def project(x, y, z):
+    n = 1500
+    return (n * x / z) + 500, (n * y / z) + 500
+
+def main():
+    H, W = 1000, 1000
+    vertices, faces = load_obj("model_1.obj")
+
+    img_matr = np.zeros((H, W, 3), dtype=np.uint8)
+    zbuf = np.full((H, W), np.inf, dtype=np.float32)
+
+    alpha = math.radians(0)  # X
+    beta = math.radians(180) # Y
+    gamma = math.radians(0)  # Z
+
+    tx, ty, tz = 0.01, -0.03, 0.3  # сдвиг модели
+   
+    for face in faces:
+        v0, v1, v2 = [vertices[i] for i in face]
+
+        # вращаем и сдвигаем вершины
+        x0, y0, z0 = rotate_and_translate(v0, alpha, beta, gamma, tx, ty, tz)
+        x1, y1, z1 = rotate_and_translate(v1, alpha, beta, gamma, tx, ty, tz)
+        x2, y2, z2 = rotate_and_translate(v2, alpha, beta, gamma, tx, ty, tz)
+
+        # проверка на положительность Z
+        if z0 <= 0 or z1 <= 0 or z2 <= 0:
+            continue
+        
+        ex0, ey0 = project(x0, y0, z0)
+        ex1, ey1 = project(x1, y1, z1)
+        ex2, ey2 = project(x2, y2, z2)
+        
+        # вычисляем нормаль для освещения
+        normal = calculate_normal((x0, y0, z0), (x1, y1, z1), (x2, y2, z2))
+
+        # проверяем видимость треугольника на основе нормали
+        if normal[2] <= 0:
+            continue
+
+        # освещение
+        light_dir = np.array([0, 0, 1])  # направление света
+        coss = np.dot(normal, light_dir)  # скалярное произведение
+        color = np.clip((255 * coss, 100, -255 * coss), 0, 255)
+
+        if coss > 0:  
+            draw_triangle([(ex0, ey0, z0), (ex1, ey1, z1), (ex2, ey2, z2)], img_matr, zbuf, color)
+
+    
+    img = Image.fromarray(img_matr, mode='RGB')
+    img = ImageOps.flip(img)  
+    img.save('frame.png')
+    img.show()
+
+main()
